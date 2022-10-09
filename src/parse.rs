@@ -64,6 +64,7 @@ impl std::error::Error for ParseError {
 }
 
 /// helper type for [`Size::from_str`]
+#[derive(Clone, Copy)]
 enum Number {
     Float(f64),
     Int(i64),
@@ -79,6 +80,44 @@ impl AsIntermediate for Number {
     }
 }
 
+impl Number {
+    /// Convert the number to a [`Size`] based on the given suffix.
+    fn to_size_with_suffix(self, suffix: &str) -> Result<Size, ParseError> {
+        // allocation-free str::to_ascii_lowercase() on the stack. SUFFIX_MAX_LEN must be at least
+        // as long as the longest suffix we parse.
+        const SUFFIX_MAX_LEN: usize = 16;
+        let mut suffix_lower_arr = [0u8; SUFFIX_MAX_LEN];
+        let suffix_lower = suffix_lower_arr
+            .get_mut(..suffix.len())
+            .ok_or(ParseError::InvalidSuffix)?;
+
+        for (src, dst) in suffix.bytes().zip(suffix_lower.iter_mut()) {
+            *dst = src.to_ascii_lowercase();
+        }
+
+        // unwrap can't fail, we filled suffix_lower with bytes from a UTF-8 str
+        match core::str::from_utf8(suffix_lower).unwrap() {
+            "" | "b" | "byte" | "bytes" => Ok(Size::from_bytes(self)),
+
+            "kb" | "kilobyte" | "kilobytes" => Ok(Size::from_kb(self)),
+            "mb" | "megabyte" | "megabytes" => Ok(Size::from_mb(self)),
+            "gb" | "gigabyte" | "gigabytes" => Ok(Size::from_gb(self)),
+            "tb" | "terabyte" | "terabytes" => Ok(Size::from_tb(self)),
+            "pb" | "petabyte" | "petabytes" => Ok(Size::from_pb(self)),
+            "eb" | "exabyte" | "exabytes" => Ok(Size::from_eb(self)),
+
+            "kib" | "kibibyte" | "kibibytes" => Ok(Size::from_kib(self)),
+            "mib" | "mebibyte" | "mebibytes" => Ok(Size::from_mib(self)),
+            "gib" | "gibibyte" | "gibibytes" => Ok(Size::from_gib(self)),
+            "tib" | "tebibyte" | "tebibytes" => Ok(Size::from_tib(self)),
+            "pib" | "pebibyte" | "pebibytes" => Ok(Size::from_pib(self)),
+            "eib" | "exbibyte" | "exbibytes" => Ok(Size::from_eib(self)),
+
+            _ => Err(ParseError::InvalidSuffix),
+        }
+    }
+}
+
 impl FromStr for Size {
     type Err = ParseError;
 
@@ -88,84 +127,68 @@ impl FromStr for Size {
     /// library), followed by zero or more whitespace characters, optionally followed by a valid
     /// suffix. All overall leading and trailing whitespace in the input is ignored.
     ///
-    /// Currently only short suffixes are handled, matched case-insensitively: `b`, `kb`, `mb`,
-    /// `gb`, `tb`, `pb`, `eb`, `kib`, `mib`, `gib`, `tib`, `pib`, `eib`. If no suffix is present,
-    /// bytes are assumed.
+    /// Valid suffixes (case-insensitive) are:
+    ///  * `b`, `byte`, `bytes`
+    ///  * `kb`, `kilobyte`, `kilobytes`
+    ///  * `mb`, `megabyte`, `megabytes`
+    ///  * `gb`, `gigabyte`, `gigabytes`
+    ///  * `tb`, `terabyte`, `terabytes`
+    ///  * `pb`, `petabyte`, `petabytes`
+    ///  * `eb`, `exabyte`, `exabytes`
+    ///  * `kib`, `kibibyte`, `kibibytes`
+    ///  * `mib`, `mebibyte`, `mebibytes`
+    ///  * `gib`, `gibibyte`, `gibibytes`
+    ///  * `tib`, `tebibyte`, `tebibytes`
+    ///  * `pib`, `pebibyte`, `pebibytes`
+    ///  * `eib`, `exbibyte`, `exbibytes`
+    /// If no suffix is present, `bytes` is assumed.
     fn from_str(s: &str) -> Result<Size, ParseError> {
         // allow and ignore arbitrary leading/trailng whitespace
         let s = s.trim();
 
-        // bail early if we're empty, allowing for a nicer return type
+        // bail early if we're empty, allowing for a nicer error
         if s.is_empty() {
             return Err(ParseError::Empty);
         }
 
         // Any non-ascii character is automatically invalid in a number or suffix, so assert that
-        // early on and we can treat `bytes` and `s` interchangeably
+        // early on and we can treat `bytes` and `s` interchangeably, i.e. byte indexes and
+        // character indexes are identical.
         if !s.is_ascii() {
             return Err(ParseError::InvalidCharacter);
         }
         let bytes = s.as_bytes();
 
-        // find the end of the number portion. num_end points one past the last valid digit
-        // character. We let the stdlib's number parsing handle invalid combinations of these
-        // digits.
+        // split into number and suffix
         let (num_str, suffix) = {
+            // num_end points one past the last valid possible "digit" character, which are
+            // chars in [0-9eE.-]. Note that num_end may equal 0 or bytes.len()
             let mut num_end = bytes
                 .iter()
                 .take_while(|b| matches!(b, b'-' | b'.' | b'e' | b'E' | b'0'..=b'9'))
                 .count();
 
-            // special case: if the last character of the number was an E, then we treat that as part
-            // of the suffix rather than as part of a floating-point number
+            // special case: if the last character of the number was an E, then we treat that the
+            // start of the suffix rather than as part of a floating-point number, e.g. we want to
+            // split "1.0EiB" as ("1.0" "EiB") rather than ("1.0E" "iB"). 'E' is the only character
+            // that's in a valid number string that can also start a suffix.
             if num_end > 0 && matches!(bytes[num_end - 1], b'e' | b'E') {
                 num_end -= 1;
             }
-            s.split_at(num_end)
-        };
-        // trim whitespace from the suffix
-        let suffix = suffix.trim();
 
-        // parse the number as either an f64 or an i64
+            let (num_str, suffix) = s.split_at(num_end);
+            // strip whitespace from the suffix
+            (num_str, suffix.trim())
+        };
+
+        // parse the number as an i64 when possible, to preserve accuracy if the value is greater
+        // than 2^56. Only parse a float if we have an decimal point or an exponent present.
         let num = match num_str.contains(&['.', 'e', 'E']) {
             true => Number::Float(num_str.parse()?),
             false => Number::Int(num_str.parse()?),
         };
 
-        // allocation-free str::to_ascii_lowercase() on the stack. SUFFIX_MAX_LEN must be at least
-        // as long as the longest suffix we parse.
-        // TODO: check full suffixes too and increase max len accordingly
-        const SUFFIX_MAX_LEN: usize = 4;
-        if suffix.len() > SUFFIX_MAX_LEN {
-            // if the suffix is longer than the max thing we'll check for
-            return Err(ParseError::InvalidSuffix);
-        }
-
-        let mut suffix_lower_arr = [0u8; SUFFIX_MAX_LEN];
-        let suffix_lower = &mut suffix_lower_arr[..suffix.len()];
-        for (src, dst) in suffix.bytes().zip(suffix_lower.iter_mut()) {
-            *dst = src.to_ascii_lowercase();
-        }
-
-        // finally match on the suffix and delegate to Size's constructors. We can pass 'num'
-        // directly because we made it implement AsIntermediate. The from_utf8 unwrap can't fail
-        // because we filled it with ascii bytes from `s`
-        Ok(match core::str::from_utf8(suffix_lower).unwrap() {
-            "" | "b" => Size::from_bytes(num),
-            "kb" => Size::from_kb(num),
-            "mb" => Size::from_mb(num),
-            "gb" => Size::from_gb(num),
-            "tb" => Size::from_tb(num),
-            "pb" => Size::from_pb(num),
-            "eb" => Size::from_eb(num),
-            "kib" => Size::from_kib(num),
-            "mib" => Size::from_mib(num),
-            "gib" => Size::from_gib(num),
-            "tib" => Size::from_tib(num),
-            "pib" => Size::from_pib(num),
-            "eib" => Size::from_eib(num),
-            _ => return Err(ParseError::InvalidSuffix),
-        })
+        num.to_size_with_suffix(suffix)
     }
 }
 
@@ -201,7 +224,7 @@ mod tests {
         err!("", ParseError::Empty);
         err!("asdf kb", ParseError::InvalidInt(_));
         err!("9999999999999999999 GB", ParseError::InvalidInt(_));
-        err!("1 aaaaaaa", ParseError::InvalidSuffix);
+        err!("1 aaaaaaaaaaaaaaaaaaaaa", ParseError::InvalidSuffix);
     }
 
     // too big for an i64 intermediate
