@@ -63,30 +63,30 @@ impl Unit {
     const fn text(&self) -> (&'static str, &'static str, &'static str, &'static str) {
         use self::Unit::*;
 
-        match &self {
-            &Byte => ("byte", "Byte", "b", "B"),
+        match self {
+            Byte => ("byte", "Byte", "b", "B"),
 
-            &Kilobyte => ("kilobyte", "Kilobyte", "kb", "KB"),
-            &Megabyte => ("megabyte", "Megabyte", "mb", "MB"),
-            &Gigabyte => ("gigabyte", "Gigabyte", "gb", "GB"),
-            &Terabyte => ("terabyte", "Terabyte", "tb", "TB"),
-            &Petabyte => ("petabyte", "Petabyte", "pb", "PB"),
-            &Exabyte  => ("exabyte",  "Exabyte",  "eb", "EB"),
+            Kilobyte => ("kilobyte", "Kilobyte", "kb", "KB"),
+            Megabyte => ("megabyte", "Megabyte", "mb", "MB"),
+            Gigabyte => ("gigabyte", "Gigabyte", "gb", "GB"),
+            Terabyte => ("terabyte", "Terabyte", "tb", "TB"),
+            Petabyte => ("petabyte", "Petabyte", "pb", "PB"),
+            Exabyte  => ("exabyte",  "Exabyte",  "eb", "EB"),
 
-            &Kibibyte => ("kibibyte", "Kibibyte", "kib", "KiB"),
-            &Mebibyte => ("mebibyte", "Mebibyte", "mib", "MiB"),
-            &Gibibyte => ("gibibyte", "Gibibyte", "gib", "GiB"),
-            &Pebibyte => ("pebibyte", "Pebibyte", "pib", "PiB"),
-            &Tebibyte => ("tebibyte", "Tebibyte", "tib", "TiB"),
-            &Exbibyte => ("exbibyte", "Exbibyte", "eib", "EiB"),
+            Kibibyte => ("kibibyte", "Kibibyte", "kib", "KiB"),
+            Mebibyte => ("mebibyte", "Mebibyte", "mib", "MiB"),
+            Gibibyte => ("gibibyte", "Gibibyte", "gib", "GiB"),
+            Pebibyte => ("pebibyte", "Pebibyte", "pib", "PiB"),
+            Tebibyte => ("tebibyte", "Tebibyte", "tib", "TiB"),
+            Exbibyte => ("exbibyte", "Exbibyte", "eib", "EiB"),
         }
     }
 
-    fn format(&self, mut fmt: &mut fmt::Formatter, bytes: u64, style: &Style) -> fmt::Result {
+    fn format(&self, fmt: &mut fmt::Formatter, bytes: u64, style: &Style) -> fmt::Result {
         match (&style, bytes) {
             (&Style::Default, _) => match &self {
-                &Unit::Byte => self.format(&mut fmt, bytes, &Style::FullLowercase),
-                _ => self.format(&mut fmt, bytes, &Style::Abbreviated),
+                &Unit::Byte => self.format(fmt, bytes, &Style::FullLowercase),
+                _ => self.format(fmt, bytes, &Style::Abbreviated),
             },
 
             (&Style::FullLowercase, 1) => write!(fmt, " {}", self.text().0),
@@ -142,7 +142,7 @@ impl Style {
     pub const FullLowerCase: Style = Style::FullLowercase;
 }
 
-impl std::fmt::Display for Size {
+impl fmt::Display for Size {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "{}", self.format())
     }
@@ -163,7 +163,8 @@ mod sealed {
 /// approach, but it may come in handy when you have many sizes and all need to be formatted in an
 /// identical and manually-specified fashion.
 ///
-/// ```
+#[cfg_attr(not(feature = "std"), doc = "```ignore")]
+#[cfg_attr(feature = "std", doc = "```")]
 /// use size::{Base, Size, SizeFormatter, Style};
 ///
 /// let formatter = SizeFormatter::new()
@@ -197,25 +198,6 @@ pub struct SizeFormatter<T: sealed::FormatterSize = ()> {
     style: Style,
 }
 
-/// Makes it possible to obtain a string from an `fmt(f: &mut Formatter)` function by initializing
-/// this type as a wrapper around said format function, then using `format!("{}", foo)` on the
-/// resulting object.
-struct FmtRenderer<F: Fn(&mut fmt::Formatter) -> fmt::Result> {
-    formatter: F,
-}
-
-impl<F: Fn(&mut fmt::Formatter) -> fmt::Result> FmtRenderer<F> {
-    pub fn new(formatter: F) -> Self {
-        Self { formatter }
-    }
-}
-
-impl<F: Fn(&mut fmt::Formatter) -> fmt::Result> fmt::Display for FmtRenderer<F> {
-    fn fmt(&self, mut f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        (self.formatter)(&mut f)
-    }
-}
-
 impl<T: sealed::FormatterSize> SizeFormatter<T> {
     /// Specify the base of the units to be used when generating the textual description of the
     /// `Size`.
@@ -234,7 +216,7 @@ impl<T: sealed::FormatterSize> SizeFormatter<T> {
     }
 
     /// Formats the provided `bytes` value with the configured [`self.Base`] and [`self.Style`].
-    fn inner_fmt(&self, mut fmt: &mut fmt::Formatter, bytes: i64) -> fmt::Result {
+    fn inner_fmt(&self, fmt: &mut fmt::Formatter, bytes: i64) -> fmt::Result {
         let bytes = match bytes {
             x @ 0..=i64::MAX => x as u64,
             y => {
@@ -262,13 +244,14 @@ impl<T: sealed::FormatterSize> SizeFormatter<T> {
             }
         };
 
-        (rule.formatter)(&mut fmt, bytes)?;
-        rule.unit.format(&mut fmt, bytes, &self.style)?;
+        (rule.formatter)(fmt, bytes)?;
+        rule.unit.format(fmt, bytes, &self.style)?;
 
-        return Ok(());
+        Ok(())
     }
 }
 
+#[cfg(feature = "std")]
 impl SizeFormatter<()> {
     /// Create a new `SizeFormatter` that can be used to repeatedly format a number of file sizes
     /// according to its configured options.
@@ -285,7 +268,11 @@ impl SizeFormatter<()> {
     pub fn format(&self, bytes: i64) -> String {
         format!(
             "{}",
-            FmtRenderer::new(|fmt: &mut fmt::Formatter| { self.inner_fmt(fmt, bytes) })
+            SizeFormatter {
+                size: &Size::from_const(bytes),
+                base: self.base,
+                style: self.style
+            }
         )
     }
 }
@@ -295,12 +282,13 @@ impl SizeFormatter<()> {
 /// builder model and exposes a chaining API for configuration (via the `.with_` functions).
 ///
 /// After configuration, a `FormattableSize` may be passed directly to the `println!()` or
-/// `format!()` macros and their friends because it implements [`Display`](std::fmt::Display), or
+/// `format!()` macros and their friends because it implements [`Display`](core::fmt::Display), or
 /// [`FormattableSize::to_string()`] can be used to retrieve a `String` containing the formatted
 /// result.
 ///
 /// Example:
-/// ```
+#[cfg_attr(not(feature = "std"), doc = "```ignore")]
+#[cfg_attr(feature = "std", doc = "```")]
 /// use size::{Base, Size, Style};
 ///
 /// let size = Size::from_mib(1.907349);
@@ -313,15 +301,6 @@ impl SizeFormatter<()> {
 /// ```
 pub type FormattableSize<'a> = SizeFormatter<&'a Size>;
 
-impl FormattableSize<'_> {
-    /// Returns the formatted `Size` as a `String`, formatted according to the current state of the
-    /// `SizeFormatter` instance as modified via [`with_style()`](Self::with_style),
-    /// [`with_base()`](Self::with_base), and co.
-    pub fn to_string(&self) -> String {
-        format!("{}", &self)
-    }
-}
-
 impl fmt::Display for FormattableSize<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.inner_fmt(f, self.size.bytes())
@@ -329,27 +308,13 @@ impl fmt::Display for FormattableSize<'_> {
 }
 
 impl Size {
-    /// Returns a textual representation of the [`Size`] for display purposes. This is a `String`
-    /// equivalent to what `Size`'s `std::fmt::Display` would return.
-    ///
-    /// Example:
-    /// ```
-    /// use size::Size;
-    ///
-    /// let bytes = Size::from_bytes(1550);
-    /// let as_text = bytes.to_string();
-    /// assert_eq!(as_text.as_str(), "1.51 KiB");
-    /// ```
-    pub fn to_string(&self) -> String {
-        return format!("{}", self.format());
-    }
-
     /// Returns a textual representation of the [`Size`] for display purposes, giving control over
     /// the returned representation's base (see [`Base::Base2`] and [`Base::Base10`]) and the style
     /// used to express the determined unit (see [`Style`]).
     ///
     /// Example:
-    /// ```
+    #[cfg_attr(not(feature = "std"), doc = "```ignore")]
+    #[cfg_attr(feature = "std", doc = "```")]
     /// use size::{Base, Size, Style};
     ///
     /// let size = Size::from_mib(1.907349);
@@ -363,10 +328,10 @@ impl Size {
     ///
     /// It is not necessary to call `.to_string()` if you are passing the formatted size to a
     /// `format!()` macro or similar (e.g. `println!` and friends), as the result implements
-    /// [`Display`](std::fmt::Display) and will resolve to the same text.
+    /// [`Display`](core::fmt::Display) and will resolve to the same text.
     pub fn format(&self) -> FormattableSize {
         FormattableSize {
-            size: &self,
+            size: self,
             base: DEFAULT_BASE,
             style: DEFAULT_STYLE,
         }
@@ -381,176 +346,176 @@ struct FormatRule {
 
 const BASE10_RULES: [FormatRule; 17] = [
     FormatRule {
-        less_than: 1 * KILOBYTE as u64,
+        less_than: KILOBYTE as u64,
         formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes),
         unit: Unit::Byte,
     },
     FormatRule {
         less_than: 10 * KILOBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / ((1i64 * KILOBYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / (KILOBYTE as f64)),
         unit: Unit::Kilobyte,
     },
     FormatRule {
         less_than: 100 * KILOBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / ((1i64 * KILOBYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / (KILOBYTE as f64)),
         unit: Unit::Kilobyte,
     },
     FormatRule {
-        less_than: 1 * MEGABYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / ((1i64 * KILOBYTE) as f64)),
+        less_than: MEGABYTE as u64,
+        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / (KILOBYTE as f64)),
         unit: Unit::Kilobyte,
     },
     FormatRule {
         less_than: 10 * MEGABYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / ((1i64 * MEGABYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / (MEGABYTE as f64)),
         unit: Unit::Megabyte,
     },
     FormatRule {
         less_than: 100 * MEGABYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / ((1i64 * MEGABYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / (MEGABYTE as f64)),
         unit: Unit::Megabyte,
     },
     FormatRule {
-        less_than: 1 * GIGABYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / ((1i64 * MEGABYTE) as f64)),
+        less_than: GIGABYTE as u64,
+        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / (MEGABYTE as f64)),
         unit: Unit::Megabyte,
     },
     FormatRule {
         less_than: 10 * GIGABYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / ((1i64 * GIGABYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / (GIGABYTE as f64)),
         unit: Unit::Gigabyte,
     },
     FormatRule {
         less_than: 100 * GIGABYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / ((1i64 * GIGABYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / (GIGABYTE as f64)),
         unit: Unit::Gigabyte,
     },
     FormatRule {
-        less_than: 1 * TERABYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / ((1i64 * GIGABYTE) as f64)),
+        less_than: TERABYTE as u64,
+        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / (GIGABYTE as f64)),
         unit: Unit::Gigabyte,
     },
     FormatRule {
         less_than: 10 * TERABYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / ((1i64 * TERABYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / (TERABYTE as f64)),
         unit: Unit::Terabyte,
     },
     FormatRule {
         less_than: 100 * TERABYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / ((1i64 * TERABYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / (TERABYTE as f64)),
         unit: Unit::Terabyte,
     },
     FormatRule {
-        less_than: 1 * PETABYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / ((1i64 * TERABYTE) as f64)),
+        less_than: PETABYTE as u64,
+        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / (TERABYTE as f64)),
         unit: Unit::Terabyte,
     },
     FormatRule {
         less_than: 10 * PETABYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / ((1i64 * PETABYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / (PETABYTE as f64)),
         unit: Unit::Petabyte,
     },
     FormatRule {
         less_than: 100 * PETABYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / ((1i64 * PETABYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / (PETABYTE as f64)),
         unit: Unit::Petabyte,
     },
     FormatRule {
-        less_than: 1 * EXABYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / ((1i64 * PETABYTE) as f64)),
+        less_than: EXABYTE as u64,
+        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / (PETABYTE as f64)),
         unit: Unit::Petabyte,
     },
     FormatRule {
         less_than: u64::max_value(),
-        formatter: |fmt, bytes| write!(fmt, "{:0}", bytes as f64 / ((1i64 * EXABYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:0}", bytes as f64 / (EXABYTE as f64)),
         unit: Unit::Exabyte,
     },
 ];
 
 const BASE2_RULES: [FormatRule; 17] = [
     FormatRule {
-        less_than: 1 * KIBIBYTE as u64,
+        less_than: KIBIBYTE as u64,
         formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes),
         unit: Unit::Byte,
     },
     FormatRule {
         less_than: 10 * KIBIBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / ((1i64 * KIBIBYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / (KIBIBYTE as f64)),
         unit: Unit::Kibibyte,
     },
     FormatRule {
         less_than: 100 * KIBIBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / ((1i64 * KIBIBYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / (KIBIBYTE as f64)),
         unit: Unit::Kibibyte,
     },
     FormatRule {
-        less_than: 1 * MEBIBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / ((1i64 * KIBIBYTE) as f64)),
+        less_than: MEBIBYTE as u64,
+        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / (KIBIBYTE as f64)),
         unit: Unit::Kibibyte,
     },
     FormatRule {
         less_than: 10 * MEBIBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / ((1i64 * MEBIBYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / (MEBIBYTE as f64)),
         unit: Unit::Mebibyte,
     },
     FormatRule {
         less_than: 100 * MEBIBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / ((1i64 * MEBIBYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / (MEBIBYTE as f64)),
         unit: Unit::Mebibyte,
     },
     FormatRule {
-        less_than: 1 * GIBIBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / ((1i64 * MEBIBYTE) as f64)),
+        less_than: GIBIBYTE as u64,
+        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / (MEBIBYTE as f64)),
         unit: Unit::Mebibyte,
     },
     FormatRule {
         less_than: 10 * GIBIBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / ((1i64 * GIBIBYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / (GIBIBYTE as f64)),
         unit: Unit::Gibibyte,
     },
     FormatRule {
         less_than: 100 * GIBIBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / ((1i64 * GIBIBYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / (GIBIBYTE as f64)),
         unit: Unit::Gibibyte,
     },
     FormatRule {
-        less_than: 1 * TEBIBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / ((1i64 * GIBIBYTE) as f64)),
+        less_than: TEBIBYTE as u64,
+        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / (GIBIBYTE as f64)),
         unit: Unit::Gibibyte,
     },
     FormatRule {
         less_than: 10 * TEBIBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / ((1i64 * TEBIBYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / (TEBIBYTE as f64)),
         unit: Unit::Tebibyte,
     },
     FormatRule {
         less_than: 100 * TEBIBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / ((1i64 * TEBIBYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / (TEBIBYTE as f64)),
         unit: Unit::Tebibyte,
     },
     FormatRule {
-        less_than: 1 * PEBIBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / ((1i64 * TEBIBYTE) as f64)),
+        less_than: PEBIBYTE as u64,
+        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / (TEBIBYTE as f64)),
         unit: Unit::Tebibyte,
     },
     FormatRule {
         less_than: 10 * PEBIBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / ((1i64 * PEBIBYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.2}", bytes as f64 / (PEBIBYTE as f64)),
         unit: Unit::Pebibyte,
     },
     FormatRule {
         less_than: 100 * PEBIBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / ((1i64 * PEBIBYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:.1}", bytes as f64 / (PEBIBYTE as f64)),
         unit: Unit::Pebibyte,
     },
     FormatRule {
-        less_than: 1 * EXBIBYTE as u64,
-        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / ((1i64 * PEBIBYTE) as f64)),
+        less_than: EXBIBYTE as u64,
+        formatter: |fmt, bytes| write!(fmt, "{:.0}", bytes as f64 / (PEBIBYTE as f64)),
         unit: Unit::Pebibyte,
     },
     FormatRule {
         less_than: u64::max_value(),
-        formatter: |fmt, bytes| write!(fmt, "{:0}", bytes as f64 / ((1i64 * EXBIBYTE) as f64)),
+        formatter: |fmt, bytes| write!(fmt, "{:0}", bytes as f64 / (EXBIBYTE as f64)),
         unit: Unit::Exbibyte,
     },
 ];
