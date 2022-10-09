@@ -299,6 +299,8 @@ impl SizeFormatter<()> {
 ///
 /// assert_eq!(text.as_str(), "2.00 Megabytes");
 /// ```
+///
+/// [`FormattableSize::to_string()`]: std::string::ToString::to_string
 pub type FormattableSize<'a> = SizeFormatter<&'a Size>;
 
 impl fmt::Display for FormattableSize<'_> {

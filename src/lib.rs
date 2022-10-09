@@ -136,6 +136,8 @@
 //! to `i64` so that no implicit floating-point math is performed. To prevent inadvertent loss of
 //! precision, it is forbidden to pass in floating point values to the `Size` API under `no_std`
 //! mode.
+//!
+//! [`Size::to_string()`]: std::string::ToString::to_string
 
 pub mod fmt;
 pub mod ops;
