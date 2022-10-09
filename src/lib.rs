@@ -141,6 +141,7 @@
 
 pub mod fmt;
 pub mod ops;
+pub mod parse;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
